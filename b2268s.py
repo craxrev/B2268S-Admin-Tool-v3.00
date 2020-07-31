@@ -164,7 +164,7 @@ def exec_s1_payloads():
             print(matches[0])
             print('=' * 20)
 
-    print('Reverse shell opened!')
+    print('Bind shell created!')
 
 
 def exec_s2_payloads():
@@ -177,7 +177,7 @@ def exec_s2_payloads():
     except EOFError as e:
         print('Connection closed: %s' % e)
     if res == ePROMPT:
-        print('Connected to reverse shell!')
+        print('Connected to bind shell!')
         print('Executing payloads..')
         for s2_payload in s2_payloads:
             if isinstance(s2_payload, list):
